@@ -1,32 +1,32 @@
-name: Build ProcessKiller
+name: Release Windows App
 
 on:
   push:
     tags:
-      - 'v*'
-    branches:
-      - main
+      - 'v*'   # Runs when you push a tag like v1.0.0
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install MinGW
-      run: |
-        choco install mingw -y --no-progress
-        echo "C:\tools\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+    - name: Setup MSVC environment
+      uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Compile hidden process
-      run: |
-        g++ -o ProcessKiller.exe ProcessKiller.cpp -static -Os -lstdc++ -lkernel32 -luser32 -ladvapi32 -mwindows
+    - name: Build with MSBuild
+      run: msbuild /p:Configuration=Release /p:Platform=x64 yourproject.sln
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
+    - name: Package executable
+      run: |
+        mkdir output
+        copy **\Release\*.exe output\
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
       with:
-        name: ProcessKiller
-        path: ProcessKiller.exe
-        retention-days: 30
+        files: output/*.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
