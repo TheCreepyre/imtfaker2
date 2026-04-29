@@ -3,7 +3,7 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v4.0*'  # Trigger on version tags like v1.0
+      - 'v*'  # Trigger on version tags like v1.0
     branches:
       - main  # Also trigger on main branch pushes
 
@@ -15,17 +15,17 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install MinGW-w64
+    - name: Install MinGW-w64 (via Chocolatey)
       run: |
-        choco install mingw -y
-        refreshenv
+        choco install mingw -y --no-progress
+        echo "C:\tools\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
-    - name: Compile the program
+    - name: Compile the program (hidden console)
       run: |
-        g++ -o ProcessKiller.exe ProcessKiller.cpp -static -Os -lstdc++ -lkernel32 -luser32 -ladvapi32
+        g++ -o ProcessKiller.exe ProcessKiller.cpp -static -Os -lstdc++ -lkernel32 -luser32 -ladvapi32 -mwindows
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
         name: ProcessKiller
         path: ProcessKiller.exe
@@ -37,7 +37,7 @@ jobs:
 
     steps:
     - name: Download artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v3
       with:
         name: ProcessKiller
 
@@ -49,3 +49,4 @@ jobs:
         name: Release ${{ github.ref_name }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
