@@ -1,4 +1,4 @@
-name: Build and Release
+name: Build and Release v4
 
 on:
   push:
@@ -15,20 +15,25 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install MinGW-w64 (via Chocolatey)
+    - name: Install MinGW-w64
       run: |
         choco install mingw -y --no-progress
         echo "C:\tools\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
-    - name: Compile the program (hidden console)
+    - name: Compile hidden console version
       run: |
         g++ -o ProcessKiller.exe ProcessKiller.cpp -static -Os -lstdc++ -lkernel32 -luser32 -ladvapi32 -mwindows
 
+    - name: Rename artifact for clarity
+      run: |
+        move ProcessKiller.exe ProcessKiller_Hidden.exe
+
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: ProcessKiller
-        path: ProcessKiller.exe
+        name: ProcessKiller_Hidden
+        path: ProcessKiller_Hidden.exe
+        retention-days: 30
 
   release:
     needs: build
@@ -37,16 +42,16 @@ jobs:
 
     steps:
     - name: Download artifact
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
-        name: ProcessKiller
+        name: ProcessKiller_Hidden
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
-        files: ProcessKiller.exe
+        files: ProcessKiller_Hidden.exe
         tag_name: ${{ github.ref_name }}
         name: Release ${{ github.ref_name }}
+        generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
