@@ -1,13 +1,13 @@
-name: Build Python Script to EXE
+name: Build Process Killer EXE
 
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # Allows manual triggering
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest  # Use a Windows runner
+    runs-on: windows-latest
 
     steps:
       - name: Checkout repository
@@ -16,19 +16,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"  # Use Python 3.11
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller psutil
+          pip install pyinstaller psutil pywin32
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --name KillProcesses kill_processes.py
+          pyinstaller --onefile --windowed --name ProcessKiller kill_processes.py
 
       - name: Upload EXE as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ProcessKiller
+          path: dist/ProcessKiller.exe
+
+      - name: Upload lock file template
         uses: actions/upload-artifact@v4
         with:
-          name: KillProcesses
-          path: dist/KillProcesses.exe
+          name: LockFileTemplate
+          path: |
+            process_killer.lock
+            !dist/
