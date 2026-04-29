@@ -3,17 +3,17 @@ name: Build Process Killer EXE
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-latest  # Required for Windows-specific features
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
@@ -25,18 +25,18 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --name ProcessKiller kill_processes.py
+          pyinstaller --onefile --name ProcessKiller kill_processes.py
 
-      - name: Upload EXE as artifact
+      - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ProcessKiller
+          name: ProcessKiller-EXE
           path: dist/ProcessKiller.exe
 
       - name: Upload lock file template
         uses: actions/upload-artifact@v4
         with:
-          name: LockFileTemplate
+          name: LockFile
           path: |
             process_killer.lock
             !dist/
