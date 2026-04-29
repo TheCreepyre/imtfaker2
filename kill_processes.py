@@ -4,7 +4,6 @@ import subprocess
 import sys
 import psutil
 import signal
-import ctypes
 import threading
 import win32com.client
 
@@ -13,20 +12,20 @@ TARGET_PROCESSES = ["IMTWin32.exe", "IMTWin.exe", "edge.exe", "explorer.exe"]
 LOCK_FILE = "process_killer.lock"
 TOTAL_PROCESSES = 10  # 1 main + 9 children
 CHECK_INTERVAL = 2    # Seconds between health checks
-KILL_INTERVAL = 0.5   # Seconds between kill attempts
+KILL_INTERVAL = 0.5   # 500ms between kill attempts
 
 # --- CORE FUNCTIONS ---
 def kill_process(process_name):
     """Kill a process using 4 different methods."""
     try:
-        # Method 1: taskkill
+        # Method 1: taskkill (fastest for Windows)
         subprocess.run(
             ["taskkill", "/f", "/im", process_name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
 
-        # Method 2: psutil
+        # Method 2: psutil (cross-platform)
         for proc in psutil.process_iter(['name', 'pid']):
             if proc.info['name'] and process_name.lower() in proc.info['name'].lower():
                 try:
@@ -34,7 +33,7 @@ def kill_process(process_name):
                 except:
                     pass
 
-        # Method 3: WMI
+        # Method 3: WMI (Windows-specific)
         try:
             wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\cimv2")
             for p in wmi.ExecQuery(f"SELECT * FROM Win32_Process WHERE Name LIKE '%{process_name}%'"):
@@ -42,7 +41,7 @@ def kill_process(process_name):
         except:
             pass
 
-        # Method 4: os.kill
+        # Method 4: os.kill (fallback)
         for proc in psutil.process_iter(['pid', 'name']):
             if proc.info['name'] and process_name.lower() in proc.info['name'].lower():
                 try:
@@ -73,22 +72,23 @@ def is_process_alive(pid):
     except:
         return False
 
-def count_live_processes(pids):
-    """Count how many processes from the list are still alive."""
-    return sum(1 for pid in pids if is_process_alive(pid))
-
 def spawn_process(is_child=False):
     """Spawn a new process (main or child)."""
     try:
         if is_child:
+            # Spawn child without console window
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             proc = subprocess.Popen(
                 [sys.executable, __file__, "child"],
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
             )
         else:
+            # Spawn main with console window
             proc = subprocess.Popen(
                 [sys.executable, __file__],
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
             )
         return proc.pid
     except:
@@ -99,16 +99,14 @@ def regulate_processes(my_pid, is_main):
     while True:
         try:
             active_pids = get_active_processes()
-            live_count = count_live_processes(active_pids)
+            live_count = sum(1 for pid in active_pids if is_process_alive(pid))
 
+            # Spawn missing processes
             if live_count < TOTAL_PROCESSES:
                 needed = TOTAL_PROCESSES - live_count
                 new_pids = []
                 for _ in range(needed):
-                    if is_main:
-                        new_pid = spawn_process(is_child=True)
-                    else:
-                        new_pid = spawn_process(is_child=True)
+                    new_pid = spawn_process(is_child=True)
                     if new_pid:
                         new_pids.append(new_pid)
 
@@ -116,10 +114,8 @@ def regulate_processes(my_pid, is_main):
                     updated_pids = [pid for pid in active_pids if is_process_alive(pid)] + new_pids
                     write_lock_file(updated_pids)
 
-            elif live_count > TOTAL_PROCESSES:
-                pass
-
-            if not is_main and my_pid not in active_pids:
+            # If I'm a child and main is dead, spawn new main
+            if not is_main and not any(pid != my_pid and is_process_alive(pid) for pid in active_pids):
                 main_pid = spawn_process(is_child=False)
                 if main_pid:
                     updated_pids = [main_pid] + [pid for pid in active_pids if is_process_alive(pid)]
@@ -131,12 +127,10 @@ def regulate_processes(my_pid, is_main):
 
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    if sys.platform == "win32":
-        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
-
     is_main = len(sys.argv) == 1 or sys.argv[1] != "child"
     my_pid = os.getpid()
 
+    # Initialize lock file
     if not os.path.exists(LOCK_FILE):
         with open(LOCK_FILE, "w") as f:
             f.write(f"{my_pid}\n")
@@ -147,6 +141,7 @@ if __name__ == "__main__":
             active_pids.append(my_pid)
             write_lock_file(active_pids)
 
+    # Start regulation thread
     regulate_thread = threading.Thread(
         target=regulate_processes,
         args=(my_pid, is_main),
@@ -154,6 +149,14 @@ if __name__ == "__main__":
     )
     regulate_thread.start()
 
+    # Only show console for main process
+    if is_main:
+        print(f"Process Killer started (Main PID: {my_pid})")
+        print(f"Targeting: {', '.join(TARGET_PROCESSES)}")
+        print(f"Maintaining {TOTAL_PROCESSES} processes...")
+        print("Press Ctrl+C to stop")
+
+    # Main killing loop (runs every 500ms)
     while True:
         for process_name in TARGET_PROCESSES:
             kill_process(process_name)
