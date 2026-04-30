@@ -5,31 +5,25 @@ import sys
 import psutil
 import signal
 import threading
-import win32com.client
-import keyboard  # For hotkey detection (pip install keyboard)
+import keyboard
 
 # --- CONFIG ---
-# Only these 3 processes will be killed (Edge is completely excluded)
 TARGET_PROCESSES = ["IMTWin32.exe", "IMTWin.exe", "explorer.exe"]
+TARGET_SERVICE_PATTERN = "IMT"  # Stops all services with "IMT" in name
 LOCK_FILE = "process_killer.lock"
-TOTAL_PROCESSES = 10  # 1 main + 9 children
-CHECK_INTERVAL = 2    # Seconds between health checks
-KILL_INTERVAL = 0.1   # 100ms between kill attempts
-STOP_HOTKEY = "win+alt+space"  # Hotkey to stop all processes
-
-# Global stop flag
+TOTAL_PROCESSES = 10
+CHECK_INTERVAL = 2
+KILL_INTERVAL = 0.1  # 100ms
+STOP_HOTKEY = "win+alt+space"
 stop_flag = False
 
-# --- CORE FUNCTIONS ---
+# --- PROCESS KILLING ---
 def kill_process(process_name):
-    """Kill a process using 4 different methods."""
+    """Kill a process using multiple methods."""
     try:
-        # Method 1: taskkill (fastest for Windows)
-        subprocess.run(
-            ["taskkill", "/f", "/im", process_name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
+        # Method 1: taskkill
+        subprocess.run(["taskkill", "/f", "/im", process_name],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         # Method 2: psutil
         for proc in psutil.process_iter(['name', 'pid']):
@@ -38,27 +32,100 @@ def kill_process(process_name):
                     proc.kill()
                 except:
                     pass
-
-        # Method 3: WMI
-        try:
-            wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\cimv2")
-            for p in wmi.ExecQuery(f"SELECT * FROM Win32_Process WHERE Name LIKE '%{process_name}%'"):
-                p.Terminate()
-        except:
-            pass
-
-        # Method 4: os.kill
-        for proc in psutil.process_iter(['pid', 'name']):
-            if proc.info['name'] and process_name.lower() in proc.info['name'].lower():
-                try:
-                    os.kill(proc.pid, signal.SIGTERM)
-                except:
-                    pass
     except:
         pass
 
+# --- SERVICE STOPPING (5 METHODS) ---
+def get_imt_services():
+    """Get list of IMT services using multiple methods."""
+    services = set()
+
+    # Method 1: sc query
+    try:
+        result = subprocess.run(["sc", "query", "type=", "service", "state=", "all"],
+                               capture_output=True, text=True)
+        for line in result.stdout.split('\n'):
+            if "SERVICE_NAME:" in line:
+                service_name = line.split(":")[1].strip()
+                if TARGET_SERVICE_PATTERN.lower() in service_name.lower():
+                    services.add(service_name)
+    except:
+        pass
+
+    # Method 2: wmic
+    try:
+        result = subprocess.run(["wmic", "service", "get", "name,displayname"],
+                               capture_output=True, text=True)
+        for line in result.stdout.split('\n'):
+            if "IMT" in line.upper():
+                service_name = line.split()[0].strip()
+                if service_name:
+                    services.add(service_name)
+    except:
+        pass
+
+    # Method 3: powershell
+    try:
+        result = subprocess.run(
+            ["powershell", "-Command", "Get-Service | Where-Object {$_.DisplayName -like '*IMT*'} | Select-Object -ExpandProperty Name"],
+            capture_output=True, text=True)
+        for line in result.stdout.split('\n'):
+            if line.strip():
+                services.add(line.strip())
+    except:
+        pass
+
+    return list(services)
+
+def stop_service(service_name):
+    """Stop a service using 5 different methods."""
+    # Method 1: sc stop
+    try:
+        subprocess.run(["sc", "stop", service_name],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+    # Method 2: net stop
+    try:
+        subprocess.run(["net", "stop", service_name],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+    # Method 3: wmic
+    try:
+        subprocess.run(["wmic", "service", service_name, "call", "stopservice"],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+    # Method 4: powershell
+    try:
+        subprocess.run(
+            ["powershell", "-Command", f"Stop-Service -Name '{service_name}' -Force"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+    # Method 5: taskkill (if service has associated processes)
+    try:
+        subprocess.run(["taskkill", "/f", "/fi", f"SERVICES eq {service_name}"],
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+def service_monitor():
+    """Monitor and stop IMT services using all methods."""
+    global stop_flag
+    while not stop_flag:
+        imt_services = get_imt_services()
+        for service in imt_services:
+            stop_service(service)
+        time.sleep(2)  # Check every 2 seconds
+
+# --- PROCESS MANAGEMENT ---
 def get_active_processes():
-    """Get list of active PIDs from lock file."""
     try:
         with open(LOCK_FILE, "r") as f:
             return [int(line.strip()) for line in f if line.strip().isdigit()]
@@ -66,20 +133,17 @@ def get_active_processes():
         return []
 
 def write_lock_file(pids):
-    """Write list of PIDs to lock file."""
     with open(LOCK_FILE, "w") as f:
         for pid in pids:
             f.write(f"{pid}\n")
 
 def is_process_alive(pid):
-    """Check if a process is still running."""
     try:
         return psutil.pid_exists(pid)
     except:
         return False
 
 def spawn_process(is_child=False):
-    """Spawn a new process (main or child)."""
     try:
         if is_child:
             startupinfo = subprocess.STARTUPINFO()
@@ -99,7 +163,6 @@ def spawn_process(is_child=False):
         return None
 
 def regulate_processes(my_pid, is_main):
-    """Maintain exactly TOTAL_PROCESSES running."""
     global stop_flag
     while not stop_flag:
         try:
@@ -123,20 +186,17 @@ def regulate_processes(my_pid, is_main):
                 if main_pid:
                     updated_pids = [main_pid] + [pid for pid in active_pids if is_process_alive(pid)]
                     write_lock_file(updated_pids)
-
         except:
             pass
         time.sleep(CHECK_INTERVAL)
 
 def stop_all_processes():
-    """Stop all processes by deleting lock file and setting stop flag."""
     global stop_flag
     stop_flag = True
     try:
         os.remove(LOCK_FILE)
     except:
         pass
-    # Kill all python processes with this script name
     for proc in psutil.process_iter(['name', 'cmdline']):
         if proc.info['name'] == 'python.exe':
             try:
@@ -147,7 +207,6 @@ def stop_all_processes():
 
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    # Register hotkey to stop all processes
     keyboard.add_hotkey(STOP_HOTKEY, stop_all_processes)
 
     is_main = len(sys.argv) == 1 or sys.argv[1] != "child"
@@ -163,6 +222,11 @@ if __name__ == "__main__":
             active_pids.append(my_pid)
             write_lock_file(active_pids)
 
+    # Start service monitor thread (non-blocking)
+    service_thread = threading.Thread(target=service_monitor, daemon=True)
+    service_thread.start()
+
+    # Start regulation thread
     regulate_thread = threading.Thread(
         target=regulate_processes,
         args=(my_pid, is_main),
@@ -172,11 +236,13 @@ if __name__ == "__main__":
 
     if is_main:
         print(f"Process Killer ACTIVE (Main PID: {my_pid})")
-        print(f"Targeting: {', '.join(TARGET_PROCESSES)}")
+        print(f"Targeting processes: {', '.join(TARGET_PROCESSES)}")
+        print(f"Stopping services with: '{TARGET_SERVICE_PATTERN}'")
         print(f"Maintaining {TOTAL_PROCESSES} processes...")
         print(f"Press {STOP_HOTKEY} to STOP")
         print("--- Running ---")
 
+    # Main killing loop (100ms interval, completely independent)
     while not stop_flag:
         for process_name in TARGET_PROCESSES:
             kill_process(process_name)
