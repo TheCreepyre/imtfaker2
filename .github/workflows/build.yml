@@ -3,11 +3,11 @@ name: Build Process Killer EXE
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # Allows manual triggering from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest  # Required for Windows-specific features
+    runs-on: windows-latest
 
     steps:
       - name: Checkout repository
@@ -21,11 +21,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller psutil pywin32 keyboard
+          pip install pyinstaller psutil keyboard
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --name ProcessKiller kill_processes.py
+          pyinstaller --onefile --windowed --name ProcessKiller kill_processes.py
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
