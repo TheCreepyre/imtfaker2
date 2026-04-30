@@ -27,20 +27,24 @@ jobs:
         run: |
           pyinstaller --onefile --windowed --name ProcessKiller --exclude-module _tkinter --exclude-module tkinter kill_processes.py
 
-      - name: Compress EXE (UPX)
+      - name: Install UPX
         run: |
-          choco install upx -y --no-progress
-          upx --best --ultra-brute ProcessKiller.exe -o ProcessKiller_compressed.exe
-          mv ProcessKiller_compressed.exe dist/ProcessKiller.exe
+          choco install upx -y --no-progress --force
+
+      - name: Compress EXE with UPX
+        run: |
+          upx --best --ultra-brute dist/ProcessKiller.exe -o dist/ProcessKiller_compressed.exe
+          Remove-Item dist/ProcessKiller.exe -Force
+          Rename-Item dist/ProcessKiller_compressed.exe dist/ProcessKiller.exe
 
       - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: ProcessKiller-EXE
           path: dist/ProcessKiller.exe
 
       - name: Upload lock file template
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: LockFile
           path: |
