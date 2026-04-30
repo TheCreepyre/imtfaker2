@@ -3,128 +3,101 @@ import time
 import subprocess
 import sys
 import psutil
-import signal
 import threading
 import keyboard
 
 # --- CONFIG ---
 TARGET_PROCESSES = ["IMTWin32.exe", "IMTWin.exe", "explorer.exe"]
-TARGET_SERVICE_PATTERN = "IMT"  # Stops all services with "IMT" in name
+TARGET_SERVICE_PATTERN = "IMT"
 LOCK_FILE = "process_killer.lock"
 TOTAL_PROCESSES = 10
-CHECK_INTERVAL = 2
-KILL_INTERVAL = 0.1  # 100ms
+CHECK_INTERVAL = 5    # Reduced to 5 seconds for services
+KILL_INTERVAL = 0.1   # 100ms for processes
 STOP_HOTKEY = "win+alt+space"
 stop_flag = False
 
-# --- PROCESS KILLING ---
-def kill_process(process_name):
-    """Kill a process using multiple methods."""
-    try:
-        # Method 1: taskkill
-        subprocess.run(["taskkill", "/f", "/im", process_name],
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+# Cache for services (avoids repeated queries)
+service_cache = []
+last_service_check = 0
+CACHE_DURATION = 300  # 5 minutes cache
 
-        # Method 2: psutil
-        for proc in psutil.process_iter(['name', 'pid']):
-            if proc.info['name'] and process_name.lower() in proc.info['name'].lower():
-                try:
-                    proc.kill()
-                except:
-                    pass
+# --- PROCESS KILLING (Optimized) ---
+def kill_process(process_name):
+    """Kill process with minimal overhead."""
+    try:
+        subprocess.run(
+            ["taskkill", "/f", "/im", process_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW  # Hide window
+        )
     except:
         pass
 
-# --- SERVICE STOPPING (5 METHODS) ---
+# --- SERVICE STOPPING (Optimized) ---
 def get_imt_services():
-    """Get list of IMT services using multiple methods."""
-    services = set()
+    """Get IMT services with caching and silent operation."""
+    global service_cache, last_service_check
 
-    # Method 1: sc query
+    # Use cached list if still valid
+    if service_cache and (time.time() - last_service_check) < CACHE_DURATION:
+        return service_cache
+
+    # New query with silent flags
     try:
-        result = subprocess.run(["sc", "query", "type=", "service", "state=", "all"],
-                               capture_output=True, text=True)
+        result = subprocess.run(
+            ["sc", "query", "type=", "service", "state=", "all"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        services = []
         for line in result.stdout.split('\n'):
             if "SERVICE_NAME:" in line:
                 service_name = line.split(":")[1].strip()
                 if TARGET_SERVICE_PATTERN.lower() in service_name.lower():
-                    services.add(service_name)
+                    services.append(service_name)
+        service_cache = services
+        last_service_check = time.time()
+        return services
     except:
-        pass
-
-    # Method 2: wmic
-    try:
-        result = subprocess.run(["wmic", "service", "get", "name,displayname"],
-                               capture_output=True, text=True)
-        for line in result.stdout.split('\n'):
-            if "IMT" in line.upper():
-                service_name = line.split()[0].strip()
-                if service_name:
-                    services.add(service_name)
-    except:
-        pass
-
-    # Method 3: powershell
-    try:
-        result = subprocess.run(
-            ["powershell", "-Command", "Get-Service | Where-Object {$_.DisplayName -like '*IMT*'} | Select-Object -ExpandProperty Name"],
-            capture_output=True, text=True)
-        for line in result.stdout.split('\n'):
-            if line.strip():
-                services.add(line.strip())
-    except:
-        pass
-
-    return list(services)
+        return service_cache if service_cache else []
 
 def stop_service(service_name):
-    """Stop a service using 5 different methods."""
-    # Method 1: sc stop
-    try:
-        subprocess.run(["sc", "stop", service_name],
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-    # Method 2: net stop
-    try:
-        subprocess.run(["net", "stop", service_name],
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-    # Method 3: wmic
-    try:
-        subprocess.run(["wmic", "service", service_name, "call", "stopservice"],
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-    # Method 4: powershell
+    """Stop service silently with multiple methods."""
+    # Method 1: sc stop (silent)
     try:
         subprocess.run(
-            ["powershell", "-Command", f"Stop-Service -Name '{service_name}' -Force"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ["sc", "stop", service_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
     except:
         pass
 
-    # Method 5: taskkill (if service has associated processes)
+    # Method 2: net stop (silent)
     try:
-        subprocess.run(["taskkill", "/f", "/fi", f"SERVICES eq {service_name}"],
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["net", "stop", service_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
     except:
         pass
 
 def service_monitor():
-    """Monitor and stop IMT services using all methods."""
+    """Optimized service monitor with caching and reduced frequency."""
     global stop_flag
     while not stop_flag:
         imt_services = get_imt_services()
         for service in imt_services:
             stop_service(service)
-        time.sleep(2)  # Check every 2 seconds
+        time.sleep(CHECK_INTERVAL)  # Check every 5 seconds
 
-# --- PROCESS MANAGEMENT ---
+# --- PROCESS MANAGEMENT (Unchanged) ---
 def get_active_processes():
     try:
         with open(LOCK_FILE, "r") as f:
@@ -222,7 +195,7 @@ if __name__ == "__main__":
             active_pids.append(my_pid)
             write_lock_file(active_pids)
 
-    # Start service monitor thread (non-blocking)
+    # Start optimized service monitor
     service_thread = threading.Thread(target=service_monitor, daemon=True)
     service_thread.start()
 
@@ -242,7 +215,7 @@ if __name__ == "__main__":
         print(f"Press {STOP_HOTKEY} to STOP")
         print("--- Running ---")
 
-    # Main killing loop (100ms interval, completely independent)
+    # Main killing loop (100ms interval, highest priority)
     while not stop_flag:
         for process_name in TARGET_PROCESSES:
             kill_process(process_name)
