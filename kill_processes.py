@@ -5,99 +5,87 @@ import sys
 import psutil
 import threading
 import keyboard
+import win32serviceutil
+import win32service
 
-# --- CONFIG ---
+# --- ULTRA-OPTIMIZED CONFIG ---
 TARGET_PROCESSES = ["IMTWin32.exe", "IMTWin.exe", "explorer.exe"]
 TARGET_SERVICE_PATTERN = "IMT"
 LOCK_FILE = "process_killer.lock"
 TOTAL_PROCESSES = 10
-CHECK_INTERVAL = 5    # Reduced to 5 seconds for services
-KILL_INTERVAL = 0.1   # 100ms for processes
+SERVICE_CHECK_INTERVAL = 10  # Reduced to 10 seconds
+KILL_INTERVAL = 0.1  # 100ms
 STOP_HOTKEY = "win+alt+space"
 stop_flag = False
 
-# Cache for services (avoids repeated queries)
+# Cache for services (persists between checks)
 service_cache = []
 last_service_check = 0
 CACHE_DURATION = 300  # 5 minutes cache
 
-# --- PROCESS KILLING (Optimized) ---
+# --- ULTRA-FAST PROCESS KILLING ---
 def kill_process(process_name):
-    """Kill process with minimal overhead."""
+    """Optimized process killing with minimal overhead."""
     try:
+        # Single most effective method with silent flags
         subprocess.run(
             ["taskkill", "/f", "/im", process_name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW  # Hide window
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
         )
     except:
         pass
 
-# --- SERVICE STOPPING (Optimized) ---
+# --- OPTIMIZED SERVICE HANDLING ---
 def get_imt_services():
-    """Get IMT services with caching and silent operation."""
+    """Cached service detection with minimal CPU usage."""
     global service_cache, last_service_check
 
-    # Use cached list if still valid
-    if service_cache and (time.time() - last_service_check) < CACHE_DURATION:
+    current_time = time.time()
+    if service_cache and (current_time - last_service_check) < CACHE_DURATION:
         return service_cache
 
-    # New query with silent flags
     try:
-        result = subprocess.run(
-            ["sc", "query", "type=", "service", "state=", "all"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        services = []
-        for line in result.stdout.split('\n'):
-            if "SERVICE_NAME:" in line:
-                service_name = line.split(":")[1].strip()
-                if TARGET_SERVICE_PATTERN.lower() in service_name.lower():
-                    services.append(service_name)
-        service_cache = services
-        last_service_check = time.time()
-        return services
+        # Single most efficient method
+        services = win32serviceutil.EnumServices(status=win32service.SERVICE_STATE_ALL)
+        imt_services = [
+            service[0] for service in services
+            if TARGET_SERVICE_PATTERN.lower() in service[0].lower()
+        ]
+        service_cache = imt_services
+        last_service_check = current_time
+        return imt_services
     except:
         return service_cache if service_cache else []
 
 def stop_service(service_name):
-    """Stop service silently with multiple methods."""
-    # Method 1: sc stop (silent)
+    """Optimized service stopping with fallback."""
     try:
-        subprocess.run(
-            ["sc", "stop", service_name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
+        # Single most reliable method
+        win32serviceutil.StopService(service_name)
     except:
-        pass
-
-    # Method 2: net stop (silent)
-    try:
-        subprocess.run(
-            ["net", "stop", service_name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-    except:
-        pass
+        try:
+            # Fallback method
+            subprocess.run(
+                ["sc", "stop", service_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+        except:
+            pass
 
 def service_monitor():
-    """Optimized service monitor with caching and reduced frequency."""
+    """Ultra-lightweight service monitor."""
     global stop_flag
     while not stop_flag:
         imt_services = get_imt_services()
         for service in imt_services:
             stop_service(service)
-        time.sleep(CHECK_INTERVAL)  # Check every 5 seconds
+        time.sleep(SERVICE_CHECK_INTERVAL)
 
-# --- PROCESS MANAGEMENT (Unchanged) ---
+# --- OPTIMIZED PROCESS MANAGEMENT ---
 def get_active_processes():
     try:
         with open(LOCK_FILE, "r") as f:
@@ -107,8 +95,7 @@ def get_active_processes():
 
 def write_lock_file(pids):
     with open(LOCK_FILE, "w") as f:
-        for pid in pids:
-            f.write(f"{pid}\n")
+        f.write("\n".join(map(str, pids)))
 
 def is_process_alive(pid):
     try:
@@ -124,7 +111,7 @@ def spawn_process(is_child=False):
             proc = subprocess.Popen(
                 [sys.executable, __file__, "child"],
                 startupinfo=startupinfo,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
             )
         else:
             proc = subprocess.Popen(
@@ -161,7 +148,7 @@ def regulate_processes(my_pid, is_main):
                     write_lock_file(updated_pids)
         except:
             pass
-        time.sleep(CHECK_INTERVAL)
+        time.sleep(2)  # Reduced health check interval
 
 def stop_all_processes():
     global stop_flag
@@ -208,18 +195,13 @@ if __name__ == "__main__":
     regulate_thread.start()
 
     if is_main:
-        print(f"Process Killer ACTIVE (Main PID: {my_pid})")
-        print(f"Targeting processes: {', '.join(TARGET_PROCESSES)}")
+        print(f"Process Killer ACTIVE (PID: {my_pid})")
+        print(f"Targeting: {', '.join(TARGET_PROCESSES)}")
         print(f"Stopping services with: '{TARGET_SERVICE_PATTERN}'")
-        print(f"Maintaining {TOTAL_PROCESSES} processes...")
         print(f"Press {STOP_HOTKEY} to STOP")
-        print("--- Running ---")
 
-    # Main killing loop (100ms interval, highest priority)
+    # Ultra-fast main loop
     while not stop_flag:
         for process_name in TARGET_PROCESSES:
             kill_process(process_name)
         time.sleep(KILL_INTERVAL)
-
-    if is_main:
-        print("Process Killer STOPPED")
