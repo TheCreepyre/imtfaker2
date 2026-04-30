@@ -23,18 +23,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller psutil keyboard
 
-      - name: Build EXE
+      - name: Build EXE (optimized for size)
         run: |
-          pyinstaller --onefile --windowed --name ProcessKiller kill_processes.py
+          pyinstaller --onefile --windowed --name ProcessKiller --exclude-module _tkinter --exclude-module tkinter kill_processes.py
+
+      - name: Compress EXE (UPX)
+        run: |
+          choco install upx -y --no-progress
+          upx --best --ultra-brute ProcessKiller.exe -o ProcessKiller_compressed.exe
+          mv ProcessKiller_compressed.exe dist/ProcessKiller.exe
 
       - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: ProcessKiller-EXE
           path: dist/ProcessKiller.exe
 
       - name: Upload lock file template
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: LockFile
           path: |
