@@ -31,33 +31,27 @@ jobs:
         run: |
           choco install upx -y --no-progress --force
 
-      - name: Compress EXE with UPX
+            - name: Compress EXE with UPX
         shell: pwsh
         run: |
           $exePath = "dist\ProcessKiller.exe"
           if (Test-Path $exePath) {
             $compressedPath = "dist\ProcessKiller_compressed.exe"
+
             & upx --best --ultra-brute $exePath -o $compressedPath
+            $upxExit = $LASTEXITCODE
+
+            if ($upxExit -ne 0) {
+              Write-Host "UPX failed (exit $upxExit). Skipping compression and continuing."
+              exit 0
+            }
+
             if (Test-Path $compressedPath) {
               Remove-Item $exePath -Force
               Rename-Item $compressedPath $exePath -Force
             } else {
-              Write-Host "UPX compression failed"
+              Write-Host "UPX produced no output; continuing without compression."
             }
           } else {
             Write-Host "EXE file not found at $exePath"
           }
-
-      - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ProcessKiller-EXE
-          path: dist/ProcessKiller.exe
-
-      - name: Upload lock file template
-        uses: actions/upload-artifact@v4
-        with:
-          name: LockFile
-          path: |
-            process_killer.lock
-            !dist/
