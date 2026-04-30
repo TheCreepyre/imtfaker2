@@ -31,7 +31,7 @@ jobs:
         run: |
           choco install upx -y --no-progress --force
 
-            - name: Compress EXE with UPX
+      - name: Compress EXE with UPX
         shell: pwsh
         run: |
           $exePath = "dist\ProcessKiller.exe"
@@ -55,3 +55,9 @@ jobs:
           } else {
             Write-Host "EXE file not found at $exePath"
           }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProcessKiller
+          path: dist\ProcessKiller.exe
