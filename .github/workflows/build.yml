@@ -21,20 +21,20 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller psutil pywin32
+          pip install pyinstaller psutil pywin32 keyboard
 
       - name: Build EXE
         run: |
           pyinstaller --onefile --name ProcessKiller kill_processes.py
 
       - name: Upload EXE artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: ProcessKiller-EXE
           path: dist/ProcessKiller.exe
 
       - name: Upload lock file template
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: LockFile
           path: |
