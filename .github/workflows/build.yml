@@ -35,17 +35,24 @@ jobs:
         shell: pwsh
         run: |
           $exePath = "dist\ProcessKiller.exe"
-          if (Test-Path $exePath) {
-            $compressedPath = "dist\ProcessKiller_compressed.exe"
-            & upx --best --ultra-brute $exePath -o $compressedPath
-            if (Test-Path $compressedPath) {
-              Remove-Item $exePath -Force
-              Rename-Item $compressedPath $exePath -Force
-            } else {
-              Write-Host "UPX compression failed"
-            }
+          if (!(Test-Path $exePath)) { throw "EXE file not found at $exePath" }
+
+          $compressedPath = "dist\ProcessKiller_compressed.exe"
+
+          & upx --best --ultra-brute $exePath -o $compressedPath
+          $upxExit = $LASTEXITCODE
+
+          if ($upxExit -ne 0) {
+            Write-Host "UPX skipped/failed (exit $upxExit). Uploading uncompressed EXE."
+            exit 0
+          }
+
+          if (Test-Path $compressedPath) {
+            Remove-Item $exePath -Force
+            Rename-Item $compressedPath $exePath -Force
           } else {
-            Write-Host "EXE file not found at $exePath"
+            Write-Host "UPX reported success but output not found; uploading uncompressed EXE."
+            exit 0
           }
 
       - name: Upload EXE artifact
