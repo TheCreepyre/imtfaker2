@@ -23,7 +23,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller psutil keyboard
 
-      - name: Build EXE (optimized for size)
+      - name: Build EXE
         run: |
           pyinstaller --onefile --windowed --name ProcessKiller --exclude-module _tkinter --exclude-module tkinter kill_processes.py
 
@@ -33,9 +33,14 @@ jobs:
 
       - name: Compress EXE with UPX
         run: |
-          upx --best --ultra-brute dist/ProcessKiller.exe -o dist/ProcessKiller_compressed.exe
-          Remove-Item dist/ProcessKiller.exe -Force
-          Rename-Item dist/ProcessKiller_compressed.exe dist/ProcessKiller.exe
+          $exePath = "dist/ProcessKiller.exe"
+          if (Test-Path $exePath) {
+            upx --best --ultra-brute $exePath -o $exePath.compressed
+            Remove-Item $exePath -Force
+            Rename-Item $exePath.compressed $exePath -Force
+          } else {
+            Write-Host "EXE file not found at $exePath"
+          }
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
