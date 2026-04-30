@@ -49,13 +49,13 @@ jobs:
           }
 
       - name: Upload EXE artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ProcessKiller-EXE
           path: dist/ProcessKiller.exe
 
       - name: Upload lock file template
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: LockFile
           path: |
