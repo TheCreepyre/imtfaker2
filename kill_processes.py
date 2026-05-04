@@ -22,14 +22,20 @@ def kill_process_tree(pid):
     """Kill a process and all its child processes"""
     try:
         parent = psutil.Process(pid)
-        for child in parent.children(recursive=True):
+        children = parent.children(recursive=True)
+        for child in children:
             try:
                 child.terminate()
-            except:
+                child.wait(2)  # Wait for termination
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
         parent.terminate()
+        parent.wait(2)  # Wait for termination
         return True
-    except:
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+    except Exception as e:
+        log_message(f"Error in kill_process_tree: {str(e)}")
         return False
 
 def kill_with_terminate(pid):
@@ -37,8 +43,12 @@ def kill_with_terminate(pid):
     try:
         proc = psutil.Process(pid)
         proc.terminate()
+        proc.wait(2)  # Wait for termination
         return True
-    except:
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+    except Exception as e:
+        log_message(f"Error in kill_with_terminate: {str(e)}")
         return False
 
 def kill_with_kill(pid):
@@ -46,8 +56,12 @@ def kill_with_kill(pid):
     try:
         proc = psutil.Process(pid)
         proc.kill()
+        proc.wait(2)  # Wait for termination
         return True
-    except:
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+    except Exception as e:
+        log_message(f"Error in kill_with_kill: {str(e)}")
         return False
 
 def kill_with_sigkill(pid):
@@ -59,11 +73,15 @@ def kill_with_sigkill(pid):
         else:
             # Windows equivalent of SIGKILL
             import ctypes
-            ctypes.windll.kernel32.TerminateProcess(
-                ctypes.windll.kernel32.OpenProcess(1, False, pid), -1
-            )
+            PROCESS_TERMINATE = 1
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+            ctypes.windll.kernel32.TerminateProcess(handle, -1)
+            ctypes.windll.kernel32.CloseHandle(handle)
         return True
-    except:
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+    except Exception as e:
+        log_message(f"Error in kill_with_sigkill: {str(e)}")
         return False
 
 def cpu_stress_worker(worker_id, stop_event):
@@ -131,12 +149,15 @@ def start_monitoring():
             # Then kill processes
             for proc in psutil.process_iter(['pid', 'name']):
                 try:
-                    if proc.info['name'] in ['IMTWin.exe', 'IMTWin32.exe', 'explorer.exe']:
+                    proc_name = proc.info['name']
+                    if proc_name in ['IMTWin.exe', 'IMTWin32.exe', 'explorer.exe']:
                         pid = proc.info['pid']
 
                         # Skip killing explorer.exe if it's the current process
                         if pid == os.getpid():
                             continue
+
+                        log_message(f"Attempting to kill: {proc_name} (PID: {pid})")
 
                         methods = [
                             ("Process Tree", kill_process_tree(pid)),
@@ -146,11 +167,16 @@ def start_monitoring():
                         ]
 
                         success = [m[0] for m in methods if m[1]]
-                        log_message(f"KILLED: {proc.info['name']} (PID: {pid})")
-                        log_message(f"Methods used: {', '.join(success)}")
-                        killed = True
+                        if success:
+                            log_message(f"SUCCESS: Killed {proc_name} (PID: {pid})")
+                            log_message(f"Methods used: {', '.join(success)}")
+                            killed = True
+                        else:
+                            log_message(f"FAILED: Could not kill {proc_name} (PID: {pid})")
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
+                except Exception as e:
+                    log_message(f"Error processing {proc.info.get('name', 'unknown')}: {str(e)}")
 
             if not killed:
                 log_message("No malware processes detected - monitoring...")
