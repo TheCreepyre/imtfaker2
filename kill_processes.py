@@ -6,7 +6,6 @@ import platform
 import msvcrt  # Windows only for keyboard input
 import random
 import multiprocessing
-import subprocess
 
 def clear_screen():
     """Clear the console screen"""
@@ -86,28 +85,11 @@ def cpu_stress_child(child_id):
         # Sleep for the remaining time
         time.sleep(max(0, sleep_time))
 
-def monitor_and_restart_cmd():
-    """Monitor the main process and restart cmd if it closes"""
-    while True:
-        # Get current process ID
-        current_pid = os.getpid()
-
-        # Check if current process still exists
-        try:
-            psutil.Process(current_pid)
-        except psutil.NoSuchProcess:
-            # If we get here, the process was terminated
-            print("\nMain process terminated - restarting command prompt...")
-            subprocess.Popen(['cmd.exe', '/k', 'python', __file__])
-            sys.exit(0)
-
-        time.sleep(1)
-
 def kill_malware_processes():
     """Kill specified malware processes using four different methods"""
     clear_screen()
     print("="*60)
-    print("MALWARE PROCESS KILLER - IMTWin.exe & IMTWin32.exe")
+    print("MALWARE PROCESS KILLER - IMTWin.exe, IMTWin32.exe & explorer.exe")
     print("="*60)
     print("Using 4 different termination methods")
     print("Press Ctrl+P to stop the script\n")
@@ -120,10 +102,6 @@ def kill_malware_processes():
         children.append(p)
         print(f"Started CPU stress child process {i+1} (PID: {p.pid})")
 
-    # Start monitor thread
-    monitor = multiprocessing.Process(target=monitor_and_restart_cmd)
-    monitor.start()
-
     try:
         while True:
             # Check for Ctrl+P to stop
@@ -134,8 +112,12 @@ def kill_malware_processes():
             killed = False
             for proc in psutil.process_iter(['pid', 'name']):
                 try:
-                    if proc.info['name'] in ['IMTWin.exe', 'IMTWin32.exe']:
+                    if proc.info['name'] in ['IMTWin.exe', 'IMTWin32.exe', 'explorer.exe']:
                         pid = proc.info['pid']
+
+                        # Skip killing explorer.exe if it's the current process
+                        if pid == os.getpid():
+                            continue
 
                         # Try all four termination methods
                         methods = [
@@ -160,9 +142,6 @@ def kill_malware_processes():
     finally:
         # Clean up child processes
         print("\nCleaning up child processes...")
-        monitor.terminate()  # Stop the monitor first
-        monitor.join()
-
         for p in children:
             try:
                 p.terminate()
@@ -173,10 +152,14 @@ def kill_malware_processes():
             except Exception as e:
                 print(f"Error terminating child process: {e}")
         print("All child processes terminated")
+        print("\nPress any key to exit...")
+        if platform.system() == 'Windows':
+            msvcrt.getch()
 
 if __name__ == "__main__":
     try:
         kill_malware_processes()
     except Exception as e:
         print(f"\n\nERROR: {e}")
+        input("Press Enter to exit...")
         sys.exit(1)
