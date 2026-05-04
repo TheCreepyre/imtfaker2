@@ -48,53 +48,6 @@ def kill_process(pid):
     except Exception:
         return False
 
-def stop_imt_services():
-    """Try to stop services containing 'IMT'"""
-    try:
-        if platform.system() == 'Windows':
-            import win32serviceutil
-            import win32service
-
-            try:
-                # Try to get service manager with minimal access
-                scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
-                services = win32service.EnumServicesStatus(scm)
-
-                for service in services:
-                    service_name = service[0]
-                    if 'IMT' in service_name.upper():
-                        try:
-                            # Try to stop the service
-                            win32serviceutil.StopService(service_name)
-                            log_message(f"Stopped service: {service_name}")
-                        except Exception as e:
-                            log_message(f"Could not stop service {service_name}: {str(e)}")
-                            # Try to mark for deletion
-                            try:
-                                win32serviceutil.ChangeServiceConfig(
-                                    service_name,
-                                    win32service.SERVICE_NO_CHANGE,
-                                    win32service.SERVICE_NO_CHANGE,
-                                    win32service.SERVICE_NO_CHANGE,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    "IMTMalware"
-                                )
-                                log_message(f"Marked service {service_name} for deletion")
-                            except Exception:
-                                pass
-                win32service.CloseServiceHandle(scm)
-            except Exception as e:
-                log_message(f"Service access error: {str(e)}")
-    except ImportError:
-        log_message("pywin32 not installed - service stopping disabled")
-    except Exception as e:
-        log_message(f"Error stopping services: {str(e)}")
-
 def cpu_stress_worker(stop_event):
     """Background CPU load"""
     while not stop_event.is_set():
@@ -122,10 +75,7 @@ def start_monitoring():
                 log_message("Stopped by Ctrl+P")
                 break
 
-            # Try to stop IMT services first
-            stop_imt_services()
-
-            # Then try to kill IMT processes
+            # Only kill IMT processes (removed service stopping)
             killed = False
             for proc in psutil.process_iter(['pid', 'name']):
                 try:
