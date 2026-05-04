@@ -4,6 +4,9 @@ import psutil
 import sys
 import platform
 import msvcrt  # Windows only for keyboard input
+import random
+import multiprocessing
+import subprocess
 
 def clear_screen():
     """Clear the console screen"""
@@ -65,6 +68,41 @@ def kill_with_sigkill(pid):
     except:
         return False
 
+def cpu_stress_child(child_id):
+    """Child process that maintains 10% CPU usage"""
+    start_time = time.time()
+    while True:
+        # Calculate how much time we should spend working vs sleeping
+        # to maintain approximately 10% CPU usage
+        elapsed = time.time() - start_time
+        work_time = 0.1 * elapsed
+        sleep_time = elapsed - work_time
+
+        # Do some work
+        x = 0
+        for _ in range(int(1e6 * work_time)):
+            x += random.random() * random.random()
+
+        # Sleep for the remaining time
+        time.sleep(max(0, sleep_time))
+
+def monitor_and_restart_cmd():
+    """Monitor the main process and restart cmd if it closes"""
+    while True:
+        # Get current process ID
+        current_pid = os.getpid()
+
+        # Check if current process still exists
+        try:
+            psutil.Process(current_pid)
+        except psutil.NoSuchProcess:
+            # If we get here, the process was terminated
+            print("\nMain process terminated - restarting command prompt...")
+            subprocess.Popen(['cmd.exe', '/k', 'python', __file__])
+            sys.exit(0)
+
+        time.sleep(1)
+
 def kill_malware_processes():
     """Kill specified malware processes using four different methods"""
     clear_screen()
@@ -74,38 +112,67 @@ def kill_malware_processes():
     print("Using 4 different termination methods")
     print("Press Ctrl+P to stop the script\n")
 
-    while True:
-        # Check for Ctrl+P to stop
-        if check_for_stop_key():
-            print("\n\nScript stopped by Ctrl+P")
-            sys.exit(0)
+    # Start exactly 10 child processes that maintain 10% CPU usage
+    children = []
+    for i in range(10):  # Start exactly 10 child processes
+        p = multiprocessing.Process(target=cpu_stress_child, args=(i,))
+        p.start()
+        children.append(p)
+        print(f"Started CPU stress child process {i+1} (PID: {p.pid})")
 
-        killed = False
-        for proc in psutil.process_iter(['pid', 'name']):
+    # Start monitor thread
+    monitor = multiprocessing.Process(target=monitor_and_restart_cmd)
+    monitor.start()
+
+    try:
+        while True:
+            # Check for Ctrl+P to stop
+            if check_for_stop_key():
+                print("\n\nScript stopped by Ctrl+P")
+                break
+
+            killed = False
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if proc.info['name'] in ['IMTWin.exe', 'IMTWin32.exe']:
+                        pid = proc.info['pid']
+
+                        # Try all four termination methods
+                        methods = [
+                            ("Process Tree", kill_process_tree(pid)),
+                            ("Terminate()", kill_with_terminate(pid)),
+                            ("Kill()", kill_with_kill(pid)),
+                            ("SIGKILL", kill_with_sigkill(pid))
+                        ]
+
+                        # Check which methods succeeded
+                        success = [m[0] for m in methods if m[1]]
+                        print(f"[{time.strftime('%H:%M:%S')}] KILLED: {proc.info['name']} (PID: {pid})")
+                        print(f"           Methods used: {', '.join(success)}")
+                        killed = True
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+
+            if not killed:
+                print(f"[{time.strftime('%H:%M:%S')}] No malware processes detected - monitoring...")
+
+            time.sleep(0.1)  # 100ms delay
+    finally:
+        # Clean up child processes
+        print("\nCleaning up child processes...")
+        monitor.terminate()  # Stop the monitor first
+        monitor.join()
+
+        for p in children:
             try:
-                if proc.info['name'] in ['IMTWin.exe', 'IMTWin32.exe']:
-                    pid = proc.info['pid']
-
-                    # Try all four termination methods
-                    methods = [
-                        ("Process Tree", kill_process_tree(pid)),
-                        ("Terminate()", kill_with_terminate(pid)),
-                        ("Kill()", kill_with_kill(pid)),
-                        ("SIGKILL", kill_with_sigkill(pid))
-                    ]
-
-                    # Check which methods succeeded
-                    success = [m[0] for m in methods if m[1]]
-                    print(f"[{time.strftime('%H:%M:%S')}] KILLED: {proc.info['name']} (PID: {pid})")
-                    print(f"           Methods used: {', '.join(success)}")
-                    killed = True
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
-
-        if not killed:
-            print(f"[{time.strftime('%H:%M:%S')}] No malware processes detected - monitoring...")
-
-        time.sleep(0.1)  # 100ms delay
+                p.terminate()
+                p.join(timeout=1)
+                if p.is_alive():
+                    p.kill()
+                    p.join()
+            except Exception as e:
+                print(f"Error terminating child process: {e}")
+        print("All child processes terminated")
 
 if __name__ == "__main__":
     try:
