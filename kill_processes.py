@@ -3,20 +3,15 @@ import time
 import psutil
 import sys
 import platform
-import msvcrt  # Windows only for keyboard input
 import random
 import threading
-
-def clear_screen():
-    """Clear the console screen.
-
-    Disabled to avoid calling external shell commands like 'cls'/'clear'.
-    """
-    return
+import tkinter as tk
+from tkinter import scrolledtext, messagebox
 
 def check_for_stop_key():
     """Check if Ctrl+P is pressed (Windows only)"""
     if platform.system() == 'Windows':
+        import msvcrt
         if msvcrt.kbhit():
             key = msvcrt.getch()
             if key == b'\x10':  # Ctrl+P
@@ -73,14 +68,11 @@ def kill_with_sigkill(pid):
 
 def cpu_stress_worker(worker_id, stop_event):
     """Thread worker that attempts to maintain ~10% CPU usage."""
-    # Note: With threads, actual CPU behavior can differ due to the GIL,
-    # but this will still generate load without spawning extra windows.
     while not stop_event.is_set():
         # Work for ~10ms, sleep for ~90ms => ~10% duty cycle
         start = time.perf_counter()
         while (time.perf_counter() - start) < 0.01:
             _ = random.random() * random.random()
-
         time.sleep(0.09)
 
 def stop_imt_services():
@@ -89,8 +81,6 @@ def stop_imt_services():
         if platform.system() == 'Windows':
             import win32serviceutil
             import win32service
-            import win32api
-
             scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
             services = win32service.EnumServicesStatus(scm)
 
@@ -98,39 +88,39 @@ def stop_imt_services():
                 service_name = service[0]
                 if 'IMT' in service_name.upper():
                     try:
-                        print(f"[{time.strftime('%H:%M:%S')}] Stopping service: {service_name}")
                         win32serviceutil.StopService(service_name)
-                        print(f"[{time.strftime('%H:%M:%S')}] Successfully stopped service: {service_name}")
+                        log_message(f"Stopped service: {service_name}")
                     except Exception as e:
-                        print(f"[{time.strftime('%H:%M:%S')}] Failed to stop service {service_name}: {str(e)}")
+                        log_message(f"Failed to stop service {service_name}: {str(e)}")
             win32service.CloseServiceHandle(scm)
     except ImportError:
-        print("pywin32 not installed. Cannot stop services on this system.")
+        log_message("pywin32 not installed. Cannot stop services on this system.")
     except Exception as e:
-        print(f"Error stopping services: {str(e)}")
+        log_message(f"Error stopping services: {str(e)}")
 
-def kill_malware_processes():
-    """Kill specified malware processes and stop IMT services using four different methods"""
-    clear_screen()
-    print("=" * 60)
-    print("MALWARE PROCESS KILLER - IMTWin.exe, IMTWin32.exe & explorer.exe")
-    print("=" * 60)
-    print("Using 4 different termination methods")
-    print("Press Ctrl+P to stop the script\n")
+def log_message(message):
+    """Add a message to the GUI log"""
+    if hasattr(log_message, 'text_widget'):
+        log_message.text_widget.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {message}\n")
+        log_message.text_widget.see(tk.END)
+        log_message.text_widget.update()
 
-    # Start exactly 10 CPU stress *threads* (no extra windows)
+def start_monitoring():
+    """Start the monitoring process in a separate thread"""
+    # Start CPU stress threads
     stop_event = threading.Event()
     threads = []
     for i in range(10):
         t = threading.Thread(target=cpu_stress_worker, args=(i, stop_event), daemon=True)
         t.start()
         threads.append(t)
-        print(f"Started CPU stress thread {i + 1}")
 
-    try:
-        while True:
+    # Start monitoring loop
+    def monitoring_loop():
+        while not stop_event.is_set():
             if check_for_stop_key():
-                print("\n\nScript stopped by Ctrl+P")
+                log_message("Script stopped by Ctrl+P")
+                stop_event.set()
                 break
 
             killed = False
@@ -156,31 +146,127 @@ def kill_malware_processes():
                         ]
 
                         success = [m[0] for m in methods if m[1]]
-                        print(f"[{time.strftime('%H:%M:%S')}] KILLED: {proc.info['name']} (PID: {pid})")
-                        print(f"           Methods used: {', '.join(success)}")
+                        log_message(f"KILLED: {proc.info['name']} (PID: {pid})")
+                        log_message(f"Methods used: {', '.join(success)}")
                         killed = True
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
 
             if not killed:
-                print(f"[{time.strftime('%H:%M:%S')}] No malware processes detected - monitoring...")
+                log_message("No malware processes detected - monitoring...")
 
             time.sleep(0.1)
-    finally:
-        print("\nCleaning up threads...")
+
+        # Cleanup
+        log_message("Cleaning up threads...")
         stop_event.set()
         for t in threads:
             t.join(timeout=1)
-        print("All threads terminated")
+        log_message("All threads terminated")
+        stop_button.config(state=tk.NORMAL)
+        start_button.config(state=tk.NORMAL)
 
-        print("\nPress any key to exit...")
-        if platform.system() == 'Windows':
-            msvcrt.getch()
+    monitoring_thread = threading.Thread(target=monitoring_loop, daemon=True)
+    monitoring_thread.start()
+
+def on_start():
+    """Handle start button click"""
+    start_button.config(state=tk.DISABLED)
+    stop_button.config(state=tk.NORMAL)
+    start_monitoring()
+
+def on_stop():
+    """Handle stop button click"""
+    stop_button.config(state=tk.DISABLED)
+    log_message("Stopping script...")
+    # The monitoring loop will handle the actual stopping
+
+def create_gui():
+    """Create the main application window"""
+    root = tk.Tk()
+    root.title("Malware Process Killer")
+    root.geometry("600x400")
+    root.resizable(True, True)
+
+    # Configure styles
+    root.configure(bg='#f0f0f0')
+    font = ('Consolas', 10)
+
+    # Header frame
+    header_frame = tk.Frame(root, bg='#f0f0f0')
+    header_frame.pack(fill=tk.X, padx=10, pady=10)
+
+    tk.Label(
+        header_frame,
+        text="MALWARE PROCESS KILLER - IMTWin.exe, IMTWin32.exe & explorer.exe",
+        font=('Consolas', 12, 'bold'),
+        bg='#f0f0f0'
+    ).pack(anchor=tk.W)
+
+    tk.Label(
+        header_frame,
+        text="Using 4 different termination methods\nPress Ctrl+P to stop the script",
+        font=('Consolas', 10),
+        bg='#f0f0f0'
+    ).pack(anchor=tk.W, pady=(5, 0))
+
+    # Button frame
+    button_frame = tk.Frame(root, bg='#f0f0f0')
+    button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+    global start_button, stop_button
+    start_button = tk.Button(
+        button_frame,
+        text="Start Monitoring",
+        command=on_start,
+        bg='#4CAF50',
+        fg='white',
+        font=('Consolas', 10, 'bold'),
+        padx=10,
+        pady=5
+    )
+    start_button.pack(side=tk.LEFT, padx=(0, 10))
+
+    stop_button = tk.Button(
+        button_frame,
+        text="Stop Monitoring",
+        command=on_stop,
+        bg='#f00000',
+        fg='white',
+        font=('Consolas', 10, 'bold'),
+        padx=10,
+        pady=5,
+        state=tk.DISABLED
+    )
+    stop_button.pack(side=tk.LEFT)
+
+    # Log display
+    log_frame = tk.Frame(root, bg='#f0f0f0')
+    log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+
+    global log_text
+    log_text = scrolledtext.ScrolledText(
+        log_frame,
+        wrap=tk.WORD,
+        font=font,
+        bg='black',
+        fg='white',
+        padx=5,
+        pady=5
+    )
+    log_text.pack(fill=tk.BOTH, expand=True)
+
+    # Store reference for logging function
+    log_message.text_widget = log_text
+
+    # Initial message
+    log_message("Ready to start monitoring. Click 'Start Monitoring' to begin.")
+
+    root.mainloop()
 
 if __name__ == "__main__":
     try:
-        kill_malware_processes()
+        create_gui()
     except Exception as e:
-        print(f"\n\nERROR: {e}")
-        input("Press Enter to exit...")
+        messagebox.showerror("Error", f"An error occurred: {str(e)}")
         sys.exit(1)
