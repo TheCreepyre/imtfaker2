@@ -5,11 +5,16 @@ import sys
 import platform
 import msvcrt  # Windows only for keyboard input
 import random
-import multiprocessing
+import threading
+
 
 def clear_screen():
-    """Clear the console screen"""
-    os.system('cls' if os.name == 'nt' else 'clear')
+    """Clear the console screen.
+
+    Disabled to avoid calling external shell commands like 'cls'/'clear'.
+    """
+    return
+
 
 def check_for_stop_key():
     """Check if Ctrl+P is pressed (Windows only)"""
@@ -19,6 +24,7 @@ def check_for_stop_key():
             if key == b'\x10':  # Ctrl+P
                 return True
     return False
+
 
 def kill_process_tree(pid):
     """Kill a process and all its child processes"""
@@ -34,6 +40,7 @@ def kill_process_tree(pid):
     except:
         return False
 
+
 def kill_with_terminate(pid):
     """Kill process using terminate() method"""
     try:
@@ -43,6 +50,7 @@ def kill_with_terminate(pid):
     except:
         return False
 
+
 def kill_with_kill(pid):
     """Kill process using kill() method"""
     try:
@@ -51,6 +59,7 @@ def kill_with_kill(pid):
         return True
     except:
         return False
+
 
 def kill_with_sigkill(pid):
     """Kill process using SIGKILL signal (Unix-like systems)"""
@@ -62,49 +71,46 @@ def kill_with_sigkill(pid):
             # Windows equivalent of SIGKILL
             import ctypes
             ctypes.windll.kernel32.TerminateProcess(
-                ctypes.windll.kernel32.OpenProcess(1, False, pid), -1)
+                ctypes.windll.kernel32.OpenProcess(1, False, pid), -1
+            )
         return True
     except:
         return False
 
-def cpu_stress_child(child_id):
-    """Child process that maintains 10% CPU usage"""
-    start_time = time.time()
-    while True:
-        # Calculate how much time we should spend working vs sleeping
-        # to maintain approximately 10% CPU usage
-        elapsed = time.time() - start_time
-        work_time = 0.1 * elapsed
-        sleep_time = elapsed - work_time
 
-        # Do some work
-        x = 0
-        for _ in range(int(1e6 * work_time)):
-            x += random.random() * random.random()
+def cpu_stress_worker(worker_id, stop_event):
+    """Thread worker that attempts to maintain ~10% CPU usage."""
+    # Note: With threads, actual CPU behavior can differ due to the GIL,
+    # but this will still generate load without spawning extra windows.
+    while not stop_event.is_set():
+        # Work for ~10ms, sleep for ~90ms => ~10% duty cycle
+        start = time.perf_counter()
+        while (time.perf_counter() - start) < 0.01:
+            _ = random.random() * random.random()
 
-        # Sleep for the remaining time
-        time.sleep(max(0, sleep_time))
+        time.sleep(0.09)
+
 
 def kill_malware_processes():
     """Kill specified malware processes using four different methods"""
     clear_screen()
-    print("="*60)
+    print("=" * 60)
     print("MALWARE PROCESS KILLER - IMTWin.exe, IMTWin32.exe & explorer.exe")
-    print("="*60)
+    print("=" * 60)
     print("Using 4 different termination methods")
     print("Press Ctrl+P to stop the script\n")
 
-    # Start exactly 10 child processes that maintain 10% CPU usage
-    children = []
-    for i in range(10):  # Start exactly 10 child processes
-        p = multiprocessing.Process(target=cpu_stress_child, args=(i,))
-        p.start()
-        children.append(p)
-        print(f"Started CPU stress child process {i+1} (PID: {p.pid})")
+    # Start exactly 10 CPU stress *threads* (no extra windows)
+    stop_event = threading.Event()
+    threads = []
+    for i in range(10):
+        t = threading.Thread(target=cpu_stress_worker, args=(i, stop_event), daemon=True)
+        t.start()
+        threads.append(t)
+        print(f"Started CPU stress thread {i + 1}")
 
     try:
         while True:
-            # Check for Ctrl+P to stop
             if check_for_stop_key():
                 print("\n\nScript stopped by Ctrl+P")
                 break
@@ -119,15 +125,13 @@ def kill_malware_processes():
                         if pid == os.getpid():
                             continue
 
-                        # Try all four termination methods
                         methods = [
                             ("Process Tree", kill_process_tree(pid)),
                             ("Terminate()", kill_with_terminate(pid)),
                             ("Kill()", kill_with_kill(pid)),
-                            ("SIGKILL", kill_with_sigkill(pid))
+                            ("SIGKILL", kill_with_sigkill(pid)),
                         ]
 
-                        # Check which methods succeeded
                         success = [m[0] for m in methods if m[1]]
                         print(f"[{time.strftime('%H:%M:%S')}] KILLED: {proc.info['name']} (PID: {pid})")
                         print(f"           Methods used: {', '.join(success)}")
@@ -138,23 +142,18 @@ def kill_malware_processes():
             if not killed:
                 print(f"[{time.strftime('%H:%M:%S')}] No malware processes detected - monitoring...")
 
-            time.sleep(0.1)  # 100ms delay
+            time.sleep(0.1)
     finally:
-        # Clean up child processes
-        print("\nCleaning up child processes...")
-        for p in children:
-            try:
-                p.terminate()
-                p.join(timeout=1)
-                if p.is_alive():
-                    p.kill()
-                    p.join()
-            except Exception as e:
-                print(f"Error terminating child process: {e}")
-        print("All child processes terminated")
+        print("\nCleaning up threads...")
+        stop_event.set()
+        for t in threads:
+            t.join(timeout=1)
+        print("All threads terminated")
+
         print("\nPress any key to exit...")
         if platform.system() == 'Windows':
             msvcrt.getch()
+
 
 if __name__ == "__main__":
     try:
