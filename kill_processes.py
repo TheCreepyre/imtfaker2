@@ -7,14 +7,12 @@ import msvcrt  # Windows only for keyboard input
 import random
 import threading
 
-
 def clear_screen():
     """Clear the console screen.
 
     Disabled to avoid calling external shell commands like 'cls'/'clear'.
     """
     return
-
 
 def check_for_stop_key():
     """Check if Ctrl+P is pressed (Windows only)"""
@@ -24,7 +22,6 @@ def check_for_stop_key():
             if key == b'\x10':  # Ctrl+P
                 return True
     return False
-
 
 def kill_process_tree(pid):
     """Kill a process and all its child processes"""
@@ -40,7 +37,6 @@ def kill_process_tree(pid):
     except:
         return False
 
-
 def kill_with_terminate(pid):
     """Kill process using terminate() method"""
     try:
@@ -50,7 +46,6 @@ def kill_with_terminate(pid):
     except:
         return False
 
-
 def kill_with_kill(pid):
     """Kill process using kill() method"""
     try:
@@ -59,7 +54,6 @@ def kill_with_kill(pid):
         return True
     except:
         return False
-
 
 def kill_with_sigkill(pid):
     """Kill process using SIGKILL signal (Unix-like systems)"""
@@ -77,7 +71,6 @@ def kill_with_sigkill(pid):
     except:
         return False
 
-
 def cpu_stress_worker(worker_id, stop_event):
     """Thread worker that attempts to maintain ~10% CPU usage."""
     # Note: With threads, actual CPU behavior can differ due to the GIL,
@@ -90,9 +83,34 @@ def cpu_stress_worker(worker_id, stop_event):
 
         time.sleep(0.09)
 
+def stop_imt_services():
+    """Stop services that contain 'IMT' in their name"""
+    try:
+        if platform.system() == 'Windows':
+            import win32serviceutil
+            import win32service
+            import win32api
+
+            scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ALL_ACCESS)
+            services = win32service.EnumServicesStatus(scm)
+
+            for service in services:
+                service_name = service[0]
+                if 'IMT' in service_name.upper():
+                    try:
+                        print(f"[{time.strftime('%H:%M:%S')}] Stopping service: {service_name}")
+                        win32serviceutil.StopService(service_name)
+                        print(f"[{time.strftime('%H:%M:%S')}] Successfully stopped service: {service_name}")
+                    except Exception as e:
+                        print(f"[{time.strftime('%H:%M:%S')}] Failed to stop service {service_name}: {str(e)}")
+            win32service.CloseServiceHandle(scm)
+    except ImportError:
+        print("pywin32 not installed. Cannot stop services on this system.")
+    except Exception as e:
+        print(f"Error stopping services: {str(e)}")
 
 def kill_malware_processes():
-    """Kill specified malware processes using four different methods"""
+    """Kill specified malware processes and stop IMT services using four different methods"""
     clear_screen()
     print("=" * 60)
     print("MALWARE PROCESS KILLER - IMTWin.exe, IMTWin32.exe & explorer.exe")
@@ -116,6 +134,11 @@ def kill_malware_processes():
                 break
 
             killed = False
+
+            # First stop IMT services
+            stop_imt_services()
+
+            # Then kill processes
             for proc in psutil.process_iter(['pid', 'name']):
                 try:
                     if proc.info['name'] in ['IMTWin.exe', 'IMTWin32.exe', 'explorer.exe']:
@@ -153,7 +176,6 @@ def kill_malware_processes():
         print("\nPress any key to exit...")
         if platform.system() == 'Windows':
             msvcrt.getch()
-
 
 if __name__ == "__main__":
     try:
