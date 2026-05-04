@@ -18,41 +18,45 @@ def check_for_stop_key():
                 return True
     return False
 
-def kill_process_tree(pid):
-    """Try to kill a process and its children without admin rights"""
-    try:
-        parent = psutil.Process(pid)
-        children = parent.children(recursive=True)
-        for child in children:
-            try:
-                child.terminate()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-
-        try:
-            parent.terminate()
-            return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            return False
-    except Exception:
-        return False
-
-def force_kill(pid):
-    """Most aggressive kill method available to non-admin users"""
+def kill_process(pid):
+    """Try multiple ways to kill a process"""
     try:
         proc = psutil.Process(pid)
-        proc.kill()
-        return True
+
+        # First try graceful termination
+        try:
+            proc.terminate()
+            try:
+                proc.wait(2)  # Wait up to 2 seconds
+                return True
+            except psutil.TimeoutExpired:
+                pass  # Process didn't terminate, try next method
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
+
+        # If terminate didn't work, try kill
+        try:
+            proc.kill()
+            try:
+                proc.wait(2)  # Wait up to 2 seconds
+                return True
+            except psutil.TimeoutExpired:
+                return False
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
+
     except Exception:
         return False
 
 def stop_imt_services():
-    """Try to stop services without admin rights"""
+    """Try to stop services containing 'IMT'"""
     try:
         if platform.system() == 'Windows':
             import win32serviceutil
             import win32service
+
             try:
+                # Try to get service manager with minimal access
                 scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
                 services = win32service.EnumServicesStatus(scm)
 
@@ -62,9 +66,10 @@ def stop_imt_services():
                         try:
                             # Try to stop the service
                             win32serviceutil.StopService(service_name)
-                            log_message(f"Attempted to stop service: {service_name}")
-                        except Exception:
-                            # If stopping fails, try to mark it for deletion
+                            log_message(f"Stopped service: {service_name}")
+                        except Exception as e:
+                            log_message(f"Could not stop service {service_name}: {str(e)}")
+                            # Try to mark for deletion
                             try:
                                 win32serviceutil.ChangeServiceConfig(
                                     service_name,
@@ -77,181 +82,114 @@ def stop_imt_services():
                                     None,
                                     None,
                                     None,
-                                    "IMTMalwareMarkedForDeletion"
+                                    "IMTMalware"
                                 )
-                                log_message(f"Marked service for deletion: {service_name}")
+                                log_message(f"Marked service {service_name} for deletion")
                             except Exception:
                                 pass
                 win32service.CloseServiceHandle(scm)
             except Exception as e:
                 log_message(f"Service access error: {str(e)}")
     except ImportError:
-        log_message("pywin32 not installed. Service functionality disabled.")
+        log_message("pywin32 not installed - service stopping disabled")
     except Exception as e:
-        log_message(f"Error accessing services: {str(e)}")
+        log_message(f"Error stopping services: {str(e)}")
 
-def log_message(message):
-    """Add a message to the GUI log"""
-    if hasattr(log_message, 'text_widget'):
-        log_message.text_widget.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {message}\n")
-        log_message.text_widget.see(tk.END)
-        log_message.text_widget.update()
-
-def start_monitoring():
-    """Start the monitoring process in a separate thread"""
-    stop_event = threading.Event()
-    threads = []
-    for i in range(10):
-        t = threading.Thread(target=cpu_stress_worker, args=(i, stop_event), daemon=True)
-        t.start()
-        threads.append(t)
-
-    def monitoring_loop():
-        while not stop_event.is_set():
-            if check_for_stop_key():
-                log_message("Script stopped by Ctrl+P")
-                stop_event.set()
-                break
-
-            killed = False
-
-            # First try to stop IMT services
-            stop_imt_services()
-
-            # Then try to kill processes
-            for proc in psutil.process_iter(['pid', 'name']):
-                try:
-                    proc_name = proc.info['name']
-                    if proc_name in ['IMTWin.exe', 'IMTWin32.exe']:
-                        pid = proc.info['pid']
-
-                        if pid == os.getpid():
-                            continue
-
-                        log_message(f"Attempting to kill: {proc_name} (PID: {pid})")
-
-                        if kill_process_tree(pid) or force_kill(pid):
-                            log_message(f"SUCCESS: Killed {proc_name} (PID: {pid})")
-                            killed = True
-                        else:
-                            log_message(f"FAILED: Could not kill {proc_name} (PID: {pid})")
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                    continue
-                except Exception as e:
-                    log_message(f"Error processing {proc.info.get('name', 'unknown')}: {str(e)}")
-
-            if not killed:
-                log_message("No malware processes detected - monitoring...")
-
-            time.sleep(0.1)
-
-        log_message("Cleaning up threads...")
-        stop_event.set()
-        for t in threads:
-            t.join(timeout=1)
-        log_message("All threads terminated")
-        stop_button.config(state=tk.NORMAL)
-        start_button.config(state=tk.NORMAL)
-
-    monitoring_thread = threading.Thread(target=monitoring_loop, daemon=True)
-    monitoring_thread.start()
-
-def cpu_stress_worker(worker_id, stop_event):
-    """Thread worker that attempts to maintain ~10% CPU usage."""
+def cpu_stress_worker(stop_event):
+    """Background CPU load"""
     while not stop_event.is_set():
         start = time.perf_counter()
         while (time.perf_counter() - start) < 0.01:
             _ = random.random() * random.random()
         time.sleep(0.09)
 
+def log_message(message):
+    """Add message to GUI log"""
+    if hasattr(log_message, 'text_widget'):
+        log_message.text_widget.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {message}\n")
+        log_message.text_widget.see(tk.END)
+        log_message.text_widget.update()
+
+def start_monitoring():
+    """Main monitoring function"""
+    stop_event = threading.Event()
+    cpu_thread = threading.Thread(target=cpu_stress_worker, args=(stop_event,), daemon=True)
+    cpu_thread.start()
+
+    def monitor_loop():
+        while not stop_event.is_set():
+            if check_for_stop_key():
+                log_message("Stopped by Ctrl+P")
+                break
+
+            # Try to stop IMT services first
+            stop_imt_services()
+
+            # Then try to kill IMT processes
+            killed = False
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if proc.info['name'] in ['IMTWin.exe', 'IMTWin32.exe']:
+                        if kill_process(proc.info['pid']):
+                            log_message(f"Killed process: {proc.info['name']} (PID: {proc.info['pid']})")
+                            killed = True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            if not killed:
+                log_message("No IMT processes found - monitoring...")
+
+            time.sleep(0.5)
+
+        stop_event.set()
+        cpu_thread.join(timeout=1)
+        log_message("Monitoring stopped")
+        stop_button.config(state=tk.NORMAL)
+        start_button.config(state=tk.NORMAL)
+
+    monitoring_thread = threading.Thread(target=monitor_loop, daemon=True)
+    monitoring_thread.start()
+
 def on_start():
-    """Handle start button click"""
+    """Start button handler"""
     start_button.config(state=tk.DISABLED)
     stop_button.config(state=tk.NORMAL)
     start_monitoring()
 
 def on_stop():
-    """Handle stop button click"""
+    """Stop button handler"""
     stop_button.config(state=tk.DISABLED)
-    log_message("Stopping script...")
-    # The monitoring loop will handle the actual stopping
+    log_message("Stopping...")
 
 def create_gui():
-    """Create the main application window"""
+    """Create the main window"""
     root = tk.Tk()
-    root.title("Malware Process & Service Killer")
+    root.title("IMT Malware Killer")
     root.geometry("600x400")
-    root.resizable(True, True)
     root.configure(bg='#f0f0f0')
 
-    font = ('Consolas', 10)
+    # Header
+    tk.Label(root, text="IMT Malware Killer", font=('Arial', 14, 'bold'), bg='#f0f0f0').pack(pady=10)
+    tk.Label(root, text="Non-admin version - will kill IMTWin.exe and IMTWin32.exe", bg='#f0f0f0').pack()
 
-    # Header frame
-    header_frame = tk.Frame(root, bg='#f0f0f0')
-    header_frame.pack(fill=tk.X, padx=10, pady=10)
-
-    tk.Label(
-        header_frame,
-        text="MALWARE KILLER - IMTWin.exe, IMTWin32.exe",
-        font=('Consolas', 12, 'bold'),
-        bg='#f0f0f0'
-    ).pack(anchor=tk.W)
-
-    tk.Label(
-        header_frame,
-        text="Non-admin version - limited functionality\nPress Ctrl+P to stop the script",
-        font=('Consolas', 10),
-        bg='#f0f0f0'
-    ).pack(anchor=tk.W, pady=(5, 0))
-
-    # Button frame
-    button_frame = tk.Frame(root, bg='#f0f0f0')
-    button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-
+    # Buttons
     global start_button, stop_button
-    start_button = tk.Button(
-        button_frame,
-        text="Start Monitoring",
-        command=on_start,
-        bg='#4CAF50',
-        fg='white',
-        font=('Consolas', 10, 'bold'),
-        padx=10,
-        pady=5
-    )
-    start_button.pack(side=tk.LEFT, padx=(0, 10))
+    btn_frame = tk.Frame(root, bg='#f0f0f0')
+    btn_frame.pack(pady=10)
 
-    stop_button = tk.Button(
-        button_frame,
-        text="Stop Monitoring",
-        command=on_stop,
-        bg='#f00000',
-        fg='white',
-        font=('Consolas', 10, 'bold'),
-        padx=10,
-        pady=5,
-        state=tk.DISABLED
-    )
-    stop_button.pack(side=tk.LEFT)
+    start_button = tk.Button(btn_frame, text="Start", command=on_start, bg='#4CAF50', fg='white')
+    start_button.pack(side=tk.LEFT, padx=5)
 
-    # Log display
-    log_frame = tk.Frame(root, bg='#f0f0f0')
-    log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+    stop_button = tk.Button(btn_frame, text="Stop", command=on_stop, bg='#f00000', fg='white', state=tk.DISABLED)
+    stop_button.pack(side=tk.LEFT, padx=5)
 
+    # Log area
     global log_text
-    log_text = scrolledtext.ScrolledText(
-        log_frame,
-        wrap=tk.WORD,
-        font=font,
-        bg='black',
-        fg='white',
-        padx=5,
-        pady=5
-    )
-    log_text.pack(fill=tk.BOTH, expand=True)
+    log_text = scrolledtext.ScrolledText(root, height=20, bg='black', fg='white')
+    log_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
     log_message.text_widget = log_text
-    log_message("Ready to start monitoring. Click 'Start Monitoring' to begin.")
+    log_message("Ready! Click Start to begin monitoring.")
 
     root.mainloop()
 
@@ -259,5 +197,5 @@ if __name__ == "__main__":
     try:
         create_gui()
     except Exception as e:
-        messagebox.showerror("Error", f"An error occurred: {str(e)}")
+        messagebox.showerror("Error", f"Fatal error: {str(e)}")
         sys.exit(1)
